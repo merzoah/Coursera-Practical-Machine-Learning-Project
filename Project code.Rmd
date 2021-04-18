@@ -1,0 +1,216 @@
+---
+title: "Coursera Practical Machine Learning Course - Prediction Assignment"
+author: "Mathew Erzoah"
+date: "March 30, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:[More info](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)(see the section on the Weight Lifting Exercise Dataset).
+
+
+###Weight Lifting Exercise Dataset
+
+The training data for this project are available here:
+
+[Training data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[Test data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this source: [here](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har). If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+The classe variable contains 5 different ways barbell lifts were performed correctly and incorrectly:
+
+. Class A: exactly according to the specification
+. Class B: throwing the elbows to the front
+. Class C: lifting the dumbbell only halfway
+. Class D: lowering the dumbbell only halfway
+. Class E: throwing the hips to the front
+
+##Objective
+The goal of this project is to predict the manner in which people performed barbell lifts. This is the classe variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+
+Packages for the analysis
+```{r}
+library(knitr)
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(corrplot)
+library(e1071)
+library(gbm)
+set.seed(123)
+```
+
+Load data into R
+```{r}
+# The location where the training data is to be downloaded from
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+# The location where the testing data is to be downloaded from
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+#Before downloading the data, you can change your working directory by setting the path in setwd()
+# Download the training data in your working directory, if it hasn't been already
+if (!file.exists("pml-training.csv")){
+  download.file(train_url, destfile="pml-training.csv", method="curl")
+}
+# Read the Training CSV file into R & replace missing values & excel division error strings #DIV/0! with 'NA'
+
+training<- read.csv("./pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+
+
+## Download the testing data in your working directory
+if (!file.exists("pml-testing.csv")){
+download.file(test_url, destfile="pml-testing.csv", method="curl")
+}
+
+# Read the Testing CSV file into R & replace missing values & excel division error strings #DIV/0! with 'NA'
+
+testing <- read.csv("./pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+dim(training)
+
+# Take a look at the Training data classe variable
+summary(training$classe)
+```
+
+
+##Partitioning the data for cross-validation
+
+The training data is split into two data sets, one for training the model and one for testing the performance of our model. The data is partitioned by the classe variable, which is the varible we will be predicting. The data is split into 60% for training and 40% for testing.
+
+```{r}
+inTrain <- createDataPartition(training$classe, p = 0.60, list = FALSE)
+df.train <- training[inTrain,]
+df.test <- training[-inTrain,]
+
+dim(df.train); dim(df.test)
+```
+
+
+##Data Processing
+Remove columns that contain NAs.
+```{r, cache=TRUE, message=FALSE}
+df.train <- df.train[, colSums(is.na(df.train)) == 0]
+df.test <- df.test[, colSums(is.na(df.test)) == 0]
+```
+
+Remove the Near Zero Variance columns
+
+```{r, cache=TRUE, message=FALSE}
+NZV <- nearZeroVar(df.train)
+df.train <- df.train[,-NZV]
+df.test <- df.test[,-NZV]
+```
+
+Remove ID columns
+```{r, cache=TRUE, message=FALSE}
+df.train <- df.train[,-(1:5)]
+df.test <- df.test[,-(1:5)]
+```
+
+# check dimension
+```{r}
+dim(df.train)
+dim(df.test)
+```
+
+### Prediction model building
+There are 54 variables left for analysis after the data processing. Three methods will be applied to model the regressions using the Train dataset and the best one with higher accuracy when applied to the Test dataset will be used for the quiz predictions. The methods are: Random Forests, Decision Tree and Generalized Boosted Model. A Confusion Matrix is plotted at the end of each analysis to better visualize the accuracy of the models.
+
+### Method 1: Random Forest
+First of all, we will build a Random Forest model and perform a prediction.
+```{r, cache=TRUE, message=FALSE}
+set.seed(123)
+mod.rf <- train(classe ~., data = df.train, method = "rf",
+                trControl = trainControl("cv", number = 5))
+mod.rf$finalModel
+```
+
+#### Prediction with Random Forest Model
+```{r}
+pred.rf <- predict(mod.rf, df.test)
+result.rf <- confusionMatrix(pred.rf, as.factor(df.test$classe))
+result.rf
+```
+
+```{r}
+# plot matrix results
+plot(result.rf$table, col = result.rf$byClass, 
+     main = paste("Random Forest - Accuracy =",
+                  round(result.rf$overall['Accuracy'], 4)))
+```
+
+
+### Method 2: Generalized Boosted Model (GBM)
+```{r}
+set.seed(123)
+mod.gbm <- train(classe ~., data = df.train, 
+                 method = "gbm", verbose = FALSE,
+                 trControl = trainControl(method = "cv", number = 5))
+mod.gbm
+```
+
+#### Prediction with Generalized Boosted Model
+```{r}
+pred.gbm <- predict(mod.gbm, df.test)
+result.gbm <- confusionMatrix(pred.gbm, 
+                              as.factor(df.test$classe))
+```
+
+
+```{r}
+# plot matrix results
+plot(result.gbm $table, col = result.gbm $byClass, 
+     main = paste("GBM - Accuracy =", 
+                  round(result.gbm $overall['Accuracy'], 4)))
+```
+
+
+### Method 3: Decision Trees
+```{r}
+set.seed(123)
+mod.rpart <- train(classe ~., data = df.train, method = "rpart")
+mod.rpart
+```
+
+
+#### Prediction with Decision Tree model
+```{r}
+pred.rpart <- predict(mod.rpart, df.test)
+result.rpart <- confusionMatrix(pred.rpart, as.factor(df.test$classe))
+```
+
+
+```{r}
+# plot matrix results
+plot(result.rpart$table, col = result.rpart$byClass, 
+     main = paste("Decision Tree - Accuracy =",
+                  round(result.rpart$overall['Accuracy'], 4)))
+```
+
+
+
+##Prediction on the Test data
+The Random Forest model gave an accuracy of 99.83%, which is the highest, considering 98.74% for Generalized Boosted Model and 60.06% accuracy from the Decision Tree. So we will use the Random Forest model to make the predictions on the test data to predict the way 20 participates performed the exercise.
+
+
+```{r}
+pred.quiz <- predict(mod.rf, testing)
+pred.quiz
+```
+
+
+##Conclusion
+There are many different machine learning algorithms. I chose to compare a number of them, and for this data, the Random Forest proved to be a more accurate way to predict the manner in which the exercise was done.
+
